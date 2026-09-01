@@ -21,7 +21,7 @@ class LLMJudge(Judge):
 
     def evaluate(self, sample: EvaluationSample) -> MetricResult:
         prompt = self._build_prompt(sample)
-        response = self._model(prompt)
+        self._model(prompt)
         raise NotImplementedError(
             "LLM judge response parsing will be implemented in the LLM evaluation milestone"
         )
