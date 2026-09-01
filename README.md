@@ -10,13 +10,13 @@
 
 Building an LLM application is only half the problem. The harder engineering problem is determining whether a change actually makes the system better.
 
-AI Eval Platform is a practical evaluation layer for AI applications. It provides common abstractions for datasets, metrics, evaluation orchestration, structured results, and aggregate reporting. Future releases will add model-based judges, RAG evaluation, production observability integrations, experimentation, and CI/CD quality gates.
+AI Eval Platform is a practical evaluation layer for AI applications. It provides common abstractions for datasets, metrics, evaluation orchestration, structured results, aggregate reporting, and model-based judges. Future releases will add RAG evaluation, production observability integrations, experimentation, and CI/CD quality gates.
 
 The project deliberately focuses on **measurement, reproducibility, regression detection, and engineering trade-offs** rather than another generic LLM wrapper.
 
-## Current capabilities — v0.1 foundation
+## Current capabilities
 
-The first working evaluation layer now includes:
+### v0.1 — Evaluation foundation
 
 - Immutable `EvaluationDataset` abstraction.
 - Structured `EvaluationSample`, `MetricResult`, and `EvaluationResult` contracts.
@@ -26,35 +26,21 @@ The first working evaluation layer now includes:
 - `MetricRegistry` for named metric discovery.
 - `Evaluator` for single and batch evaluation.
 - `EvaluationReport` with mean scores and pass rates.
-- Unit tests for core behavior.
-- GitHub Actions CI for linting, type checking, and tests.
+- Unit tests and GitHub Actions CI.
 
-### Example
+### v0.2 — LLM-as-a-Judge foundation
 
-```python
-from ai_eval.core import EvaluationDataset, EvaluationReport, EvaluationSample, Evaluator
-from ai_eval.metrics import ExactMatchMetric, KeywordRelevanceMetric
+The current development milestone adds a provider-neutral judge architecture:
 
+- `JudgeCriteria` and rubric configuration.
+- Structured `JudgeResponse` and criterion-level scores.
+- Rubric-driven judge prompts.
+- Strict JSON response validation.
+- Model-provider injection through a simple callable interface.
+- Judge output normalized into the platform's existing `MetricResult` contract.
+- Tests using a deterministic fake model, so the evaluation core does not require an API key.
 
-dataset = EvaluationDataset.from_samples(
-    "smoke-test",
-    [
-        EvaluationSample(
-            sample_id="1",
-            input="What is the capital of France?",
-            output="Paris",
-            expected_output="Paris",
-        )
-    ],
-)
-
-evaluator = Evaluator([ExactMatchMetric(), KeywordRelevanceMetric()])
-results = evaluator.evaluate_many(dataset)
-report = EvaluationReport.from_results(dataset.name, results)
-
-for metric in report.metrics:
-    print(metric.metric_name, metric.mean_score)
-```
+The provider SDK integration is intentionally separate. This allows the same judge abstraction to work with different model providers later.
 
 ## Architecture
 
@@ -66,13 +52,13 @@ for metric in report.metrics:
                      | Evaluation Runner |
                      +---------+---------+
                                |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-        Deterministic      LLM Judges       System Signals
-           Metrics                            
-              |                |                |
-              +----------------+----------------+
+             +-----------------+------------------+
+             |                 |                  |
+             v                 v                  v
+       Deterministic       LLM Judges        System Signals
+          Metrics              |                  |
+             |                 |                  |
+             +-----------------+------------------+
                                |
                                v
                      Evaluation Results
@@ -83,24 +69,32 @@ for metric in report.metrics:
               Experiment Store       CI/CD Gate
 ```
 
-The v0.1 implementation is intentionally smaller:
+### LLM-as-a-Judge flow
 
 ```text
-Dataset
-   |
-   v
-Evaluator
-   |
-   +----> Metrics
-   |
-   v
-Evaluation Results
-   |
-   v
-Aggregate Report
+EvaluationSample
+       |
+       v
+  JudgeConfig / Rubric
+       |
+       v
+  Prompt Builder
+       |
+       v
+   Model Provider
+       |
+       v
+ Structured JSON
+       |
+       v
+ Response Validator
+       |
+       v
+   JudgeResponse
+       |
+       v
+   MetricResult
 ```
-
-The production architecture will extend this core without coupling it to a specific model provider or observability vendor.
 
 ## Design principles
 
@@ -108,7 +102,7 @@ The production architecture will extend this core without coupling it to a speci
 2. **Metric composability** — individual metrics should be independently testable and replaceable.
 3. **Structured results** — every evaluation should produce a consistent result object.
 4. **Reproducibility** — datasets, configurations, model versions, and evaluation settings should eventually be recorded.
-5. **Explicit failure** — invalid inputs and unsupported evaluation states should fail clearly rather than silently producing misleading results.
+5. **Explicit failure** — invalid inputs and malformed judge responses should fail clearly rather than silently producing misleading results.
 6. **Measurement before dashboards** — the evaluation engine must be trustworthy before a large platform layer is added.
 
 ## Evaluation dimensions
@@ -117,6 +111,7 @@ The production architecture will extend this core without coupling it to a speci
 |---|---|---|
 | Correctness | Exact match, reference comparison | **Implemented** |
 | Relevance | Keyword overlap baseline | **Implemented** |
+| LLM judgment | Rubric-based structured scoring | **Foundation implemented** |
 | Faithfulness | Grounding against retrieved context | Planned |
 | Retrieval | Recall@k, precision@k, ranking quality | Planned |
 | Safety | Policy/guardrail checks | Planned |
@@ -135,8 +130,13 @@ ai-eval-platform/
 │   │   ├── models.py        # Evaluation data contracts
 │   │   ├── registry.py      # Metric registry
 │   │   └── report.py        # Aggregate reporting
-│   ├── metrics/              # Evaluation metrics
-│   ├── judges/               # Model-based judges
+│   ├── metrics/              # Deterministic metrics
+│   ├── judges/
+│   │   ├── base.py          # Judge interface
+│   │   ├── schemas.py       # Rubric and judgment contracts
+│   │   ├── prompts.py       # Rubric-driven prompt construction
+│   │   ├── parser.py        # Strict response validation
+│   │   └── llm_judge.py     # Provider-neutral judge adapter
 │   └── pipelines/            # Evaluation workflows
 ├── tests/                    # Automated tests
 ├── examples/                 # Runnable examples
@@ -175,6 +175,7 @@ pytest
 ```bash
 python examples/basic_evaluation.py
 python examples/evaluation_report.py
+python examples/llm_judge.py
 ```
 
 ## Development philosophy
@@ -204,12 +205,15 @@ Evaluation numbers should never be presented without methodology and context.
 
 ### Phase 2 — LLM evaluation
 
-- [ ] Provider abstraction
-- [ ] LLM-as-a-Judge
-- [ ] Judge prompt templates
-- [ ] Structured judge outputs
+- [x] Judge interface
+- [x] Rubric configuration
+- [x] Structured judge outputs
+- [x] Strict response validation
+- [x] Provider-neutral model adapter
+- [ ] Production provider integrations
 - [ ] Judge agreement analysis
 - [ ] Calibration datasets
+- [ ] Judge bias/variance experiments
 
 ### Phase 3 — RAG evaluation
 
@@ -227,7 +231,7 @@ Evaluation numbers should never be presented without methodology and context.
 - [ ] Evaluation reports with run metadata
 - [ ] Regression detection
 - [ ] CI/CD quality gates
-- [ ] Observability adapter
+- [ ] Provider-neutral observability adapter
 - [ ] Langfuse integration
 
 ### Phase 5 — Agent evaluation
@@ -259,9 +263,9 @@ Evaluation numbers should never be presented without methodology and context.
 
 ## Current status
 
-**Stage: v0.1 — Evaluation foundation**
+**Stage: v0.2 — LLM-as-a-Judge foundation**
 
-The foundation is now implemented. The next milestone is **LLM-as-a-Judge**, followed by RAG evaluation and a provider-neutral observability layer. Langfuse is planned as an integration rather than a core dependency.
+The judge architecture is now implemented without coupling the core to an external model provider. The next step is to add a real provider adapter and begin controlled judge-quality experiments.
 
 ## Contributing
 
