@@ -10,29 +10,51 @@
 
 Building an LLM application is only half the problem. The harder engineering problem is determining whether a change actually makes the system better.
 
-AI Eval Platform is being built as a practical evaluation layer for AI applications. It provides a common interface for running evaluation datasets, computing deterministic metrics, invoking model-based judges, comparing experiments, and eventually enforcing quality gates in CI/CD.
+AI Eval Platform is a practical evaluation layer for AI applications. It provides common abstractions for datasets, metrics, evaluation orchestration, structured results, and aggregate reporting. Future releases will add model-based judges, RAG evaluation, production observability integrations, experimentation, and CI/CD quality gates.
 
 The project deliberately focuses on **measurement, reproducibility, regression detection, and engineering trade-offs** rather than another generic LLM wrapper.
 
-## Goals
+## Current capabilities — v0.1 foundation
 
-- Provide a clean, extensible evaluation API.
-- Support LLM, RAG, and agent evaluation workflows.
-- Separate evaluation orchestration from individual metrics and judges.
-- Make evaluation results structured, reproducible, and machine-readable.
-- Support both deterministic metrics and LLM-as-a-Judge evaluation.
-- Make quality regressions visible before production deployment.
-- Track quality, latency, token usage, and cost as first-class signals.
-- Evolve toward a CI/CD quality gate for AI systems.
+The first working evaluation layer now includes:
 
-## Non-goals
+- Immutable `EvaluationDataset` abstraction.
+- Structured `EvaluationSample`, `MetricResult`, and `EvaluationResult` contracts.
+- Pluggable `Metric` interface.
+- Deterministic exact-match evaluation.
+- Deterministic keyword-overlap baseline evaluation.
+- `MetricRegistry` for named metric discovery.
+- `Evaluator` for single and batch evaluation.
+- `EvaluationReport` with mean scores and pass rates.
+- Unit tests for core behavior.
+- GitHub Actions CI for linting, type checking, and tests.
 
-This project is not intended to be:
+### Example
 
-- A model-training framework.
-- A replacement for vector databases or LLM providers.
-- A single vendor-specific evaluation SDK.
-- A dashboard-first product before the evaluation core is reliable.
+```python
+from ai_eval.core import EvaluationDataset, EvaluationReport, EvaluationSample, Evaluator
+from ai_eval.metrics import ExactMatchMetric, KeywordRelevanceMetric
+
+
+dataset = EvaluationDataset.from_samples(
+    "smoke-test",
+    [
+        EvaluationSample(
+            sample_id="1",
+            input="What is the capital of France?",
+            output="Paris",
+            expected_output="Paris",
+        )
+    ],
+)
+
+evaluator = Evaluator([ExactMatchMetric(), KeywordRelevanceMetric()])
+results = evaluator.evaluate_many(dataset)
+report = EvaluationReport.from_results(dataset.name, results)
+
+for metric in report.metrics:
+    print(metric.metric_name, metric.mean_score)
+```
 
 ## Architecture
 
@@ -61,22 +83,40 @@ This project is not intended to be:
               Experiment Store       CI/CD Gate
 ```
 
-The core design follows a few principles:
+The v0.1 implementation is intentionally smaller:
+
+```text
+Dataset
+   |
+   v
+Evaluator
+   |
+   +----> Metrics
+   |
+   v
+Evaluation Results
+   |
+   v
+Aggregate Report
+```
+
+The production architecture will extend this core without coupling it to a specific model provider or observability vendor.
+
+## Design principles
 
 1. **Provider independence** — evaluation logic should not be tightly coupled to one model provider.
 2. **Metric composability** — individual metrics should be independently testable and replaceable.
 3. **Structured results** — every evaluation should produce a consistent result object.
-4. **Reproducibility** — datasets, configurations, model versions, and evaluation settings should be recorded.
-5. **Fail explicitly** — missing inputs, invalid configurations, and judge failures should be observable rather than silently ignored.
+4. **Reproducibility** — datasets, configurations, model versions, and evaluation settings should eventually be recorded.
+5. **Explicit failure** — invalid inputs and unsupported evaluation states should fail clearly rather than silently producing misleading results.
+6. **Measurement before dashboards** — the evaluation engine must be trustworthy before a large platform layer is added.
 
 ## Evaluation dimensions
 
-The roadmap covers several classes of evaluation:
-
 | Dimension | Examples | Status |
 |---|---|---|
-| Correctness | Exact match, reference comparison | Planned |
-| Relevance | Answer/query relevance | Planned |
+| Correctness | Exact match, reference comparison | **Implemented** |
+| Relevance | Keyword overlap baseline | **Implemented** |
 | Faithfulness | Grounding against retrieved context | Planned |
 | Retrieval | Recall@k, precision@k, ranking quality | Planned |
 | Safety | Policy/guardrail checks | Planned |
@@ -89,15 +129,20 @@ The roadmap covers several classes of evaluation:
 ```text
 ai-eval-platform/
 ├── src/ai_eval/
-│   ├── core/             # Core evaluation contracts and orchestration
-│   ├── metrics/          # Evaluation metrics
-│   ├── judges/           # Model-based judges
-│   └── pipelines/        # Evaluation workflows
-├── tests/                # Automated tests
-├── examples/             # Small runnable examples
-├── docs/                  # Architecture and methodology documentation
-├── .github/workflows/    # CI automation
-├── pyproject.toml        # Project metadata and dependencies
+│   ├── core/
+│   │   ├── dataset.py       # Dataset abstraction
+│   │   ├── evaluator.py     # Evaluation orchestration
+│   │   ├── models.py        # Evaluation data contracts
+│   │   ├── registry.py      # Metric registry
+│   │   └── report.py        # Aggregate reporting
+│   ├── metrics/              # Evaluation metrics
+│   ├── judges/               # Model-based judges
+│   └── pipelines/            # Evaluation workflows
+├── tests/                    # Automated tests
+├── examples/                 # Runnable examples
+├── docs/                     # Architecture and methodology
+├── .github/workflows/        # CI automation
+├── pyproject.toml            # Project metadata and dependencies
 └── README.md
 ```
 
@@ -125,15 +170,14 @@ pip install -e ".[dev]"
 pytest
 ```
 
-### Run the example
+### Run examples
 
 ```bash
 python examples/basic_evaluation.py
+python examples/evaluation_report.py
 ```
 
 ## Development philosophy
-
-This repository is intentionally being developed incrementally.
 
 Each major capability should answer four questions:
 
@@ -142,18 +186,21 @@ Each major capability should answer four questions:
 3. **What engineering decision does the measurement enable?**
 4. **What are the failure modes and limitations?**
 
-That means evaluation numbers should never be presented without methodology and context.
+Evaluation numbers should never be presented without methodology and context.
 
 ## Roadmap
 
 ### Phase 1 — Evaluation foundation
 
 - [x] Repository and project structure
-- [ ] Core evaluation data models
-- [ ] Metric interface
-- [ ] Evaluator orchestration
-- [ ] Deterministic correctness/relevance metrics
-- [ ] Unit test suite
+- [x] Core evaluation data models
+- [x] Dataset abstraction
+- [x] Metric interface
+- [x] Evaluator orchestration
+- [x] Deterministic baseline metrics
+- [x] Aggregate evaluation reports
+- [x] Unit test suite
+- [x] CI
 
 ### Phase 2 — LLM evaluation
 
@@ -177,9 +224,11 @@ That means evaluation numbers should never be presented without methodology and 
 - [ ] Experiment tracking
 - [ ] Latency and token metrics
 - [ ] Cost tracking
-- [ ] Evaluation reports
+- [ ] Evaluation reports with run metadata
 - [ ] Regression detection
 - [ ] CI/CD quality gates
+- [ ] Observability adapter
+- [ ] Langfuse integration
 
 ### Phase 5 — Agent evaluation
 
@@ -206,12 +255,13 @@ That means evaluation numbers should never be presented without methodology and 
 - How do we distinguish model regressions from evaluation noise?
 - What quality threshold is appropriate for an automated deployment gate?
 - How should quality, latency, and cost be optimized together?
+- How can production traces become high-quality evaluation datasets?
 
 ## Current status
 
-**Stage: Foundation / v0.1 development**
+**Stage: v0.1 — Evaluation foundation**
 
-The initial release establishes the architecture and contracts. Functionality will be added through small, testable increments rather than a large monolithic implementation.
+The foundation is now implemented. The next milestone is **LLM-as-a-Judge**, followed by RAG evaluation and a provider-neutral observability layer. Langfuse is planned as an integration rather than a core dependency.
 
 ## Contributing
 
