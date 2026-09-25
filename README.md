@@ -274,3 +274,50 @@ Contributions, ideas, and critical discussion are welcome. Please open an issue 
 ## License
 
 MIT License. See [LICENSE](LICENSE).
+
+
+## JEV + Langfuse Intelligent Evaluation POC
+
+This branch contains a proof of concept for **dynamic evaluator selection using TypeSafe's Jev decision model**.
+
+Instead of running every evaluator on every observation:
+
+```
+Langfuse observation
+        |
+        v
+      Jev
+        |
+        v
+  Evaluation Plan
+        |
+   +----+----+----+
+   v    v    v
+  PII  RAG  Tool-use
+```
+
+Jev acts as a decision layer that asks typed questions about the observation and returns probabilities. The application validates those decisions against a fixed evaluator registry before executing downstream evaluators.
+
+### Run the local POC
+
+```bash
+pip install -e ".[dev,jev]"
+python examples/jev_routing_demo.py
+pytest
+```
+
+The demo uses a deterministic local router so it runs without credentials. To use the real Jev API:
+
+```bash
+export TYPESAFE_API_KEY="..."
+```
+
+and instantiate:
+
+```python
+from ai_eval.jev.typesafe_client import TypeSafeJevDecisionModel
+engine = EvaluationDecisionEngine(TypeSafeJevDecisionModel())
+```
+
+See [docs/jev-intelligent-evaluation.md](docs/jev-intelligent-evaluation.md) for the architecture, measurement plan, and Langfuse integration.
+
