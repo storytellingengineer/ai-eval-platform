@@ -12,7 +12,7 @@ from ai_eval.jev.models import EvaluatorSpec
 
 
 class TypeSafeJevDecisionModel:
-    """Use Jev to select which evaluators should run."""
+    """Use Jev's atomic Noul questions to route evaluation dimensions."""
 
     model_name = "jev-latest"
 
@@ -24,47 +24,40 @@ class TypeSafeJevDecisionModel:
         self._client = client
 
     def decide(self, state: dict, evaluator_registry: dict[str, EvaluatorSpec]) -> dict:
-        from typesafe_sdk import Choice
+        from typesafe_sdk import Noul
 
-        criteria = {
-            name: spec.description
+        questions = {
+            name: Noul(
+                instructions=(
+                    f"Should the '{name}' evaluator run on this observation? "
+                    f"Evaluator purpose: {spec.description} "
+                    f"Run it only when the observation contains evidence that "
+                    f"this evaluation dimension is relevant."
+                )
+            )
             for name, spec in evaluator_registry.items()
         }
 
-        question = Choice(
-            instructions=(
-                "Which evaluation dimensions are materially relevant to this "
-                "LLM observation? Select every applicable dimension. "
-                "Use the evaluator descriptions as the available choices."
-            ),
-            criteria=criteria,
-            # Jev Choice is a single choice primitive. The POC therefore uses
-            # a compact routing category and deterministic post-processing.
-        )
-
         response = self._client.system_one(
             state=self._serialize_state(state),
-            questions={"primary_dimension": question},
+            questions=questions,
         )
-        answer = response.answers["primary_dimension"]
 
-        selected_name = getattr(answer, "choice", None)
-        confidence = float(getattr(answer, "confidence", 0.0))
-        if selected_name not in evaluator_registry:
-            return {"selected": []}
-
-        return {
-            "selected": [
+        selected = []
+        for name in evaluator_registry:
+            answer = response.answers[name]
+            probability = float(getattr(answer, "noul", 0.0))
+            selected.append(
                 {
-                    "name": selected_name,
-                    "confidence": confidence,
+                    "name": name,
+                    "confidence": probability,
                     "reason": (
-                        "Jev identified this evaluator as the primary relevant "
-                        "evaluation dimension."
+                        f"Jev P(relevant)={probability:.2f} for {name}."
                     ),
                 }
-            ]
-        }
+            )
+
+        return {"selected": selected}
 
     @staticmethod
     def _serialize_state(state: dict) -> str:
